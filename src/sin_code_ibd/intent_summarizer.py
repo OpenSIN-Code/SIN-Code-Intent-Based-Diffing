@@ -1,8 +1,8 @@
 """Fasst AST-Changes zu architektonischen Intents zusammen."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 from .ast_diff import Change
 
@@ -17,7 +17,7 @@ class IntentSummary:
 
 
 class IntentSummarizer:
-    """Klassifiziert einen Satz von AST-Changes in architektonische Intents."""
+    """Klassifiziert AST-Changes in architektonische Intents."""
 
     def summarize(self, changes: list[Change]) -> list[IntentSummary]:
         if not changes:
@@ -28,73 +28,54 @@ class IntentSummarizer:
 
         intents: list[IntentSummary] = []
 
-        # Signature changes -> API-Change
         if groups.get("signature_changed"):
             syms = [c.symbol for c in groups["signature_changed"]]
             intents.append(IntentSummary(
                 headline=f"API signatures modified: {len(syms)} symbol(s)",
-                category="api_change",
-                risk="high",
-                affected_symbols=syms,
-                rationale="Changed function/method signatures may break callers. Review required.",
+                category="api_change", risk="high", affected_symbols=syms,
+                rationale="Changed signatures may break callers. Review required.",
             ))
 
-        # Added + removed -> potential rename or refactor
         added = [c.symbol for c in groups.get("added", [])]
         removed = [c.symbol for c in groups.get("removed", [])]
         if added and removed and len(added) == len(removed):
             intents.append(IntentSummary(
                 headline=f"Possible rename/refactor: {len(added)} symbol(s) swapped",
-                category="refactor",
-                risk="medium",
-                affected_symbols=added + removed,
-                rationale="Equal counts of adds/removals suggests renaming or restructuring.",
+                category="refactor", risk="medium", affected_symbols=added + removed,
+                rationale="Equal adds/removals suggests renaming or restructuring.",
             ))
         elif added:
             intents.append(IntentSummary(
                 headline=f"New symbols added: {len(added)}",
-                category="feature",
-                risk="low",
-                affected_symbols=added,
+                category="feature", risk="low", affected_symbols=added,
                 rationale="New code was introduced.",
             ))
         elif removed:
             intents.append(IntentSummary(
                 headline=f"Symbols removed: {len(removed)}",
-                category="cleanup",
-                risk="medium",
-                affected_symbols=removed,
+                category="cleanup", risk="medium", affected_symbols=removed,
                 rationale="Existing code was deleted - verify no callers remain.",
             ))
 
-        # Body changes without signature changes
         if groups.get("body_changed"):
             syms = [c.symbol for c in groups["body_changed"]]
             intents.append(IntentSummary(
                 headline=f"Internal logic changed: {len(syms)} symbol(s)",
-                category="refactor",
-                risk="low",
-                affected_symbols=syms,
+                category="refactor", risk="low", affected_symbols=syms,
                 rationale="Implementation changed but public surface kept intact.",
             ))
 
-        # Decorator changes (auth, caching, tracing etc.)
         if groups.get("decorators_changed"):
             syms = [c.symbol for c in groups["decorators_changed"]]
             intents.append(IntentSummary(
                 headline=f"Cross-cutting concerns changed: {len(syms)} symbol(s)",
-                category="api_change",
-                risk="medium",
-                affected_symbols=syms,
+                category="api_change", risk="medium", affected_symbols=syms,
                 rationale="Decorators often control auth, tracing, caching - high impact.",
             ))
 
         if not intents:
             intents.append(IntentSummary(
-                headline="Cosmetic changes only",
-                category="unknown",
-                risk="low",
+                headline="Cosmetic changes only", category="unknown", risk="low",
                 rationale="Docstrings or whitespace adjusted.",
             ))
-
         return intents

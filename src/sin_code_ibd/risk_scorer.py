@@ -1,4 +1,4 @@
-"""Berechnet Risiko-Scores für Changes."""
+"""Berechnet Risiko-Scores fuer Changes."""
 from __future__ import annotations
 
 from .ast_diff import Change
@@ -22,9 +22,12 @@ class RiskScorer:
             risk = "medium"
         else:
             risk = "high"
+        breakdown: dict[str, int] = {}
+        for c in changes:
+            breakdown[c.change_type] = breakdown.get(c.change_type, 0) + 1
         return {
             "score": round(total, 2),
             "risk": risk,
             "change_count": len(changes),
-            "breakdown": {ct: sum(1 for c in changes if c.change_type == ct) for ct in set(c.change_type for c in changes)},
+            "breakdown": breakdown,
         }

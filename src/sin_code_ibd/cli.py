@@ -1,6 +1,7 @@
 """CLI for Intent-Based Diffing."""
+from __future__ import annotations
+
 import json
-import sys
 from pathlib import Path
 
 import typer
@@ -20,10 +21,8 @@ def diff(file_a: Path, file_b: Path, json_output: bool = typer.Option(False, "--
     """Diff two files semantically."""
     ad = ASTDiff()
     changes = ad.diff_files(str(file_a), str(file_b))
-    ism = IntentSummarizer()
-    intents = ism.summarize(changes)
-    rs = RiskScorer()
-    risk = rs.score(changes)
+    intents = IntentSummarizer().summarize(changes)
+    risk = RiskScorer().score(changes)
 
     if json_output:
         console.print_json(json.dumps({
@@ -47,26 +46,26 @@ def review_git():
         import git
     except ImportError:
         console.print("[red]gitpython required[/red]")
-        return
-    import tempfile, os
-    repo = git.Repo(".")
+        raise typer.Exit(1)
+    repo = git.Repo(".", search_parent_directories=True)
     diffs = repo.index.diff(None)
     ad = ASTDiff()
     all_changes = []
     for d in diffs:
-        if not d.a_path.endswith(".py"):
+        if not (d.a_path or "").endswith(".py"):
             continue
         try:
             old = repo.git.show(f"HEAD:{d.a_path}").encode()
         except Exception:
             old = b""
-        with open(d.a_path, "rb") as f:
-            new = f.read()
+        try:
+            with open(d.a_path, "rb") as f:
+                new = f.read()
+        except Exception:
+            new = b""
         all_changes.extend(ad.diff_strings(old, new, d.a_path))
-    ism = IntentSummarizer()
-    intents = ism.summarize(all_changes)
-    rs = RiskScorer()
-    risk = rs.score(all_changes)
+    intents = IntentSummarizer().summarize(all_changes)
+    risk = RiskScorer().score(all_changes)
     console.print(Panel(f"[bold]Overall Risk: {risk['risk']} ({risk['score']})[/bold]"))
     for i in intents:
         console.print(f" - {i.headline}")
