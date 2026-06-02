@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python **3.11+**
+- Python **3.10+**
 - `pip` (or `uv`/`pipx`)
 - Git (for repository-aware features)
 
@@ -14,7 +14,7 @@ cd SIN-Code-Intent-Based-Diffing
 pip install -e .
 ```
 
-This installs the `ibd` command and the importable package `sin_code_ibd`.
+This installs the importable package `sin_code_ibd`.
 
 ## Install into an isolated environment
 
@@ -24,11 +24,27 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
+## Optional: JS/TS support
+
+For JavaScript/TypeScript parsing, install the optional `js` extra:
+
+```bash
+pip install -e ".[js]"
+```
+
+## Optional: MCP server support
+
+The MCP server requires the optional `mcp` dependency:
+
+```bash
+pip install -e ".[mcp]"
+```
+
 ## Verify the installation
 
 ```bash
-ibd --help
 pytest -q
+python -c "from sin_code_ibd import ASTDiff, IntentSummarizer, RiskScorer; print('OK')"
 ```
 
 ## Uninstall

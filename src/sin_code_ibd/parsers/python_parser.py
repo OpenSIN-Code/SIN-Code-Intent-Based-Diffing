@@ -1,6 +1,6 @@
 """Python parser using the stdlib `ast` module.
 
-Docs: src/sin_code_ibd/parsers/python_parser.doc.md
+Docs: python_parser.doc.md
 """
 
 from __future__ import annotations

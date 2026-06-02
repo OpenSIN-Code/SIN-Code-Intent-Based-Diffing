@@ -1,6 +1,6 @@
 """JavaScript parser (stub — tree-sitter optional).
 
-Docs: src/sin_code_ibd/parsers/js_parser.doc.md
+Docs: js_parser.doc.md
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """Parsers package — auto-detect language from file extension.
 
-Docs: src/sin_code_ibd/parsers/__init__.doc.md
+Docs: __init__.py.doc.md
 """
 
 from __future__ import annotations

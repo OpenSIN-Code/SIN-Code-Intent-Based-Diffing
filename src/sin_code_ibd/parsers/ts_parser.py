@@ -1,6 +1,6 @@
 """TypeScript parser (stub — tree-sitter optional).
 
-Docs: src/sin_code_ibd/parsers/ts_parser.doc.md
+Docs: ts_parser.doc.md
 """
 
 from __future__ import annotations
