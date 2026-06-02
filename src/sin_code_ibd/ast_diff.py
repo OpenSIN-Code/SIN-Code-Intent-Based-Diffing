@@ -1,147 +1,137 @@
-"""AST-basierter Diff, der Symbole statt Zeilen vergleicht."""
+"""ASTDiff — semantic diffing engine.
+
+Docs: src/sin_code_ibd/ast_diff.py.doc.md
+"""
+
 from __future__ import annotations
+import difflib
+import os
+from pathlib import Path
+from typing import Any
 
-from dataclasses import dataclass, field
-from typing import Optional
-
-
-def _build_parser(language):
-    from tree_sitter import Parser
-    try:
-        return Parser(language)
-    except TypeError:
-        p = Parser()
-        p.set_language(language)
-        return p
-
-
-@dataclass
-class SymbolSnapshot:
-    name: str
-    kind: str
-    signature: str
-    body: str
-    decorators: list[str]
-    docstring: Optional[str]
-
-    @property
-    def fqid(self) -> str:
-        return f"{self.kind}:{self.name}"
-
-
-@dataclass
-class Change:
-    change_type: str
-    symbol: str
-    file: str
-    details: dict = field(default_factory=dict)
-    severity: str = "info"
+from .nodes import Change, ChangeType, DiffNode
+from .parsers import get_parser
 
 
 class ASTDiff:
-    """Vergleicht Code via AST statt Text."""
+    """Compare two files or directories at the AST level."""
 
-    def __init__(self):
-        self._parsers: dict = {}
-        self._init_parsers()
+    def __init__(self, parser: str = "auto"):
+        """parser='auto' detects from file extension."""
+        self.parser = parser
 
-    def _init_parsers(self):
-        from tree_sitter import Language
-        for lang in ("python",):
-            try:
-                mod = __import__(f"tree_sitter_{lang}", fromlist=["language"])
-                self._parsers[lang] = _build_parser(Language(mod.language()))
-            except Exception as e:  # pragma: no cover
-                print(f"[WARN] Could not load {lang}: {e}")
+    def diff_files(self, path_a: str, path_b: str) -> list[Change]:
+        """Returns list of semantic changes (not just text diffs)."""
+        parser_a = get_parser(path_a) if self.parser == "auto" else get_parser(path_a)
+        parser_b = get_parser(path_b) if self.parser == "auto" else get_parser(path_b)
+        nodes_a = [DiffNode(**d) for d in parser_a.parse_file(path_a)]
+        nodes_b = [DiffNode(**d) for d in parser_b.parse_file(path_b)]
+        return self._diff_nodes(nodes_a, nodes_b)
 
-    @property
-    def available(self) -> bool:
-        return "python" in self._parsers
-
-    def _extract_symbols(self, source: bytes, lang: str = "python") -> dict[str, SymbolSnapshot]:
-        if lang not in self._parsers:
-            return {}
-        tree = self._parsers[lang].parse(source)
-        symbols: dict[str, SymbolSnapshot] = {}
-        stack = [tree.root_node]
-        while stack:
-            node = stack.pop()
-            if node.type in ("function_definition", "class_definition"):
-                name_node = next((c for c in node.children if c.type == "identifier"), None)
-                name = name_node.text.decode("utf-8") if name_node else "<anon>"
-                kind = "function" if node.type == "function_definition" else "class"
-                params_node = next((c for c in node.children if c.type == "parameters"), None)
-                params = params_node.text.decode("utf-8") if params_node else "()"
-                decorators = []
-                parent = node.parent
-                if parent and parent.type == "decorated_definition":
-                    for c in parent.children:
-                        if c.type == "decorator":
-                            decorators.append(c.text.decode("utf-8"))
-                body_node = next((c for c in node.children if c.type == "block"), None)
-                body = body_node.text.decode("utf-8").strip() if body_node else ""
-                doc = self._docstring(body_node)
-                symbols[f"{kind}:{name}"] = SymbolSnapshot(
-                    name=name, kind=kind,
-                    signature=f"{name}{params}",
-                    body=body, decorators=decorators, docstring=doc,
-                )
-            stack.extend(node.children)
-        return symbols
-
-    @staticmethod
-    def _docstring(body_node) -> Optional[str]:
-        if body_node is None:
-            return None
-        for stmt in body_node.children:
-            if stmt.type == "expression_statement":
-                inner = stmt.children[0] if stmt.children else None
-                if inner is not None and inner.type == "string":
-                    return inner.text.decode("utf-8")
-                return None
-        return None
-
-    def diff_files(self, file_a: str, file_b: str) -> list[Change]:
-        with open(file_a, "rb") as f:
-            src_a = f.read()
-        with open(file_b, "rb") as f:
-            src_b = f.read()
-        return self.diff_strings(src_a, src_b, file_a)
-
-    def diff_strings(self, src_a: bytes, src_b: bytes, file_label: str = "<inline>") -> list[Change]:
-        sa = self._extract_symbols(src_a)
-        sb = self._extract_symbols(src_b)
+    def diff_dirs(self, dir_a: str, dir_b: str) -> list[Change]:
+        """Recursively diff two directories."""
         changes: list[Change] = []
-
-        added = set(sb) - set(sa)
-        removed = set(sa) - set(sb)
-        common = set(sa) & set(sb)
-
-        for sym in sorted(added):
-            changes.append(Change("added", sym, file_label, severity="low"))
-        for sym in sorted(removed):
-            changes.append(Change("removed", sym, file_label, severity="medium"))
-
-        for sym in sorted(common):
-            a, b = sa[sym], sb[sym]
-            if a.signature != b.signature:
-                changes.append(Change(
-                    "signature_changed", sym, file_label,
-                    details={"old": a.signature, "new": b.signature},
-                    severity="high",
-                ))
-            if set(a.decorators) != set(b.decorators):
-                changes.append(Change(
-                    "decorators_changed", sym, file_label,
-                    details={"old": a.decorators, "new": b.decorators},
-                    severity="medium",
-                ))
-            if a.docstring != b.docstring:
-                changes.append(Change("docstring_changed", sym, file_label, severity="info"))
-            if a.body != b.body:
-                changes.append(Change(
-                    "body_changed", sym, file_label,
-                    details={"old_len": len(a.body), "new_len": len(b.body)},
-                    severity="low",
-                ))
+        files_a = {str(p.relative_to(dir_a)): p for p in Path(dir_a).rglob("*") if p.is_file()}
+        files_b = {str(p.relative_to(dir_b)): p for p in Path(dir_b).rglob("*") if p.is_file()}
+        all_files = set(files_a.keys()) | set(files_b.keys())
+        for rel in sorted(all_files):
+            a = files_a.get(rel)
+            b = files_b.get(rel)
+            if a and b:
+                changes.extend(self.diff_files(str(a), str(b)))
+            elif a and not b:
+                # Entire file removed
+                parser = get_parser(str(a))
+                for d in parser.parse_file(str(a)):
+                    changes.append(Change(
+                        change_type=ChangeType.REMOVED,
+                        node=DiffNode(**d),
+                        details=f"File {rel} removed",
+                    ))
+            elif b and not a:
+                # Entire file added
+                parser = get_parser(str(b))
+                for d in parser.parse_file(str(b)):
+                    changes.append(Change(
+                        change_type=ChangeType.ADDED,
+                        node=DiffNode(**d),
+                        details=f"File {rel} added",
+                    ))
         return changes
+
+    def _diff_nodes(self, nodes_a: list[DiffNode], nodes_b: list[DiffNode]) -> list[Change]:
+        changes: list[Change] = []
+        by_name_a = {n.name: n for n in nodes_a}
+        by_name_b = {n.name: n for n in nodes_b}
+        all_names = set(by_name_a.keys()) | set(by_name_b.keys())
+        for name in all_names:
+            na = by_name_a.get(name)
+            nb = by_name_b.get(name)
+            if na and not nb:
+                changes.append(Change(
+                    change_type=ChangeType.REMOVED,
+                    node=na,
+                    before=na,
+                    details=f"Removed {na.node_type} {name}",
+                ))
+            elif nb and not na:
+                changes.append(Change(
+                    change_type=ChangeType.ADDED,
+                    node=nb,
+                    after=nb,
+                    details=f"Added {nb.node_type} {name}",
+                ))
+            elif na and nb:
+                if self._is_renamed(na, nb):
+                    changes.append(Change(
+                        change_type=ChangeType.RENAMED,
+                        node=nb,
+                        before=na,
+                        after=nb,
+                        details=f"Renamed {na.node_type} {name}",
+                    ))
+                elif self._is_refactored(na, nb):
+                    changes.append(Change(
+                        change_type=ChangeType.REFACTORED,
+                        node=nb,
+                        before=na,
+                        after=nb,
+                        details=f"Refactored {na.node_type} {name}",
+                    ))
+                elif self._is_modified(na, nb):
+                    changes.append(Change(
+                        change_type=ChangeType.MODIFIED,
+                        node=nb,
+                        before=na,
+                        after=nb,
+                        details=f"Modified {na.node_type} {name}",
+                    ))
+        return changes
+
+    def _is_renamed(self, a: DiffNode, b: DiffNode) -> bool:
+        """True if the node moved to a different parent but kept body."""
+        if a.parent != b.parent and a.body == b.body:
+            return True
+        return False
+
+    def _is_refactored(self, a: DiffNode, b: DiffNode) -> bool:
+        """True if body similarity is high but structure changed, signature unchanged."""
+        if not a.body or not b.body:
+            return False
+        if a.signature != b.signature:
+            return False
+        # Refactoring usually involves substantial bodies (>5 lines)
+        if len(a.body.splitlines()) < 5 or len(b.body.splitlines()) < 5:
+            return False
+        # Simple heuristic: >30% line similarity but not identical
+        seq = difflib.SequenceMatcher(None, a.body, b.body)
+        ratio = seq.ratio()
+        return 0.3 < ratio < 1.0
+
+    def _is_modified(self, a: DiffNode, b: DiffNode) -> bool:
+        """True if signature or body changed."""
+        if a.signature != b.signature:
+            return True
+        if a.body != b.body:
+            return True
+        return False
