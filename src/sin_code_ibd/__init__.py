@@ -1,6 +1,12 @@
 """SIN-Code-Intent-Based-Diffing — AST-based semantic diffing with intent and risk analysis.
 
-Docs: README.md
+Re-exports the public API: `ASTDiff` (the diffing engine),
+`IntentSummarizer` (human-readable summaries), `RiskScorer` (numeric
+risk assessment), and the data classes `DiffNode`, `Change`, and
+`ChangeType`. See `ast_diff.doc.md` for the engine and `intent.doc.md`
+/ `risk.doc.md` for the analyses.
+
+Docs: __init__.doc.md
 """
 
 from .ast_diff import ASTDiff

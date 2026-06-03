@@ -1,8 +1,12 @@
 """IntentSummarizer — generate human-readable intent from changes.
 
-Docs: src/sin_code_ibd/intent.py.doc.md
-"""
+The summarizer classifies each `Change` into a category (feature /
+refactor / fix / chore / security) using keyword matching on the
+change's `details` and `node.name`, then groups changes by category
+and renders a one-line summary.
 
+Docs: intent.doc.md
+"""
 from __future__ import annotations
 import dataclasses
 from typing import Any
@@ -10,17 +14,30 @@ from typing import Any
 from .nodes import Change, ChangeType
 
 
+# ── Data model ─────────────────────────────────────────────────────────
 @dataclasses.dataclass(frozen=True, slots=True)
 class Intent:
-    """Structured intent extracted from a change set."""
+    """Structured intent extracted from a change set.
+
+    Fields:
+      - `category`: dominant category (`feature` / `refactor` / `fix` / `chore` / `security`)
+      - `description`: human-readable one-liner (same as `summarize()` returns)
+      - `affected_areas`: distinct node types touched (e.g. `["FunctionDef", "ClassDef"]`)
+      - `confidence`: 0.1–1.0, derived from the number of changes
+    """
     category: str          # e.g. 'feature', 'refactor', 'fix', 'chore'
     description: str       # human-readable one-liner
     affected_areas: list[str]
     confidence: float      # 0.0-1.0
 
 
+# ── IntentSummarizer ──────────────────────────────────────────────────
 class IntentSummarizer:
-    """Summarize a list of semantic changes into a human-readable intent string."""
+    """Summarize a list of semantic changes into a human-readable intent string.
+
+    Categories: `feature` (add), `chore` (remove), `refactor` (rename/extract),
+    `fix` (default for MODIFIED), `security` (auth/crypto keywords).
+    """
 
     # Keywords mapped to categories
     CATEGORY_HINTS: dict[str, str] = {
@@ -44,7 +61,11 @@ class IntentSummarizer:
     }
 
     def summarize(self, changes: list[Change]) -> str:
-        """Returns human-readable intent like 'Refactored auth flow, added OAuth support'."""
+        """Render a one-line summary like `'Refactored auth flow, added OAuth support'`.
+
+        Empty input returns a "no changes" placeholder. Mixed uncategorizable
+        changes return "Mixed changes detected."
+        """
         if not changes:
             return "No semantic changes detected."
 
@@ -62,7 +83,11 @@ class IntentSummarizer:
         return ", ".join(parts)
 
     def summarize_structured(self, changes: list[Change]) -> Intent:
-        """Return a structured Intent object."""
+        """Return a structured `Intent` (category + description + areas + confidence).
+
+        Confidence is `min(1.0, max(0.1, len(changes) / 10))` — 10 changes
+        saturates to 1.0; a single change floors to 0.1.
+        """
         text = self.summarize(changes)
         categories = self._categorize(changes)
         areas = sorted({c.node.node_type for c in changes})
@@ -75,7 +100,9 @@ class IntentSummarizer:
             confidence=confidence,
         )
 
+    # ── Internal: classification ────────────────────────────────────────
     def _categorize(self, changes: list[Change]) -> dict[str, list[Change]]:
+        """Bucket changes by detected category (in `CATEGORY_HINTS` order)."""
         buckets: dict[str, list[Change]] = {}
         for c in changes:
             cat = self._detect_category(c)
@@ -83,6 +110,10 @@ class IntentSummarizer:
         return buckets
 
     def _detect_category(self, change: Change) -> str:
+        """Classify a change by keyword match (first hit wins) or by ChangeType.
+
+        Order: CATEGORY_HINTS keywords → ADDED → REMOVED → REFACTORED/RENAMED → "fix".
+        """
         text = (change.details + " " + change.node.name).lower()
         for hint, cat in self.CATEGORY_HINTS.items():
             if hint in text:
@@ -96,6 +127,7 @@ class IntentSummarizer:
         return "fix"
 
     def _action_for_category(self, category: str) -> str:
+        """Past-tense verb for a category: feature → "Added", fix → "Fixed", etc."""
         return {
             "feature": "Added",
             "chore": "Removed",
@@ -105,6 +137,7 @@ class IntentSummarizer:
         }.get(category, "Changed")
 
     def _pretty_list(self, items: list[str]) -> str:
+        """Render a list with Oxford-style commas: `["a"]` → `"a"`, `["a","b"]` → `"a and b"`, `["a","b","c"]` → `"a, b and c"`."""
         if not items:
             return ""
         if len(items) == 1:

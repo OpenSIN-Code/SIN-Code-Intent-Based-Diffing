@@ -1,8 +1,10 @@
 """Report formatting utilities.
 
-Docs: src/sin_code_ibd/report.doc.md
-"""
+Three static methods that render structured objects as text or JSON.
+Designed for CLI / log output — not optimized for HTML or rich UI.
 
+Docs: report.doc.md
+"""
 from __future__ import annotations
 import json
 from typing import Any
@@ -12,11 +14,20 @@ from .risk import RiskReport
 from .intent import Intent
 
 
+# ── ReportFormatter ───────────────────────────────────────────────────
 class ReportFormatter:
-    """Format changes and risk reports into human-readable text or JSON."""
+    """Format changes and risk reports into human-readable text or JSON.
+
+    All methods are `@staticmethod` — the class is a namespace, not
+    a stateful object.
+    """
 
     @staticmethod
     def format_changes(changes: list[Change]) -> str:
+        """Render a list of `Change` as a multi-line text report.
+
+        One line per change: `[CHANGE_TYPE] NodeType Name` + file:line + details.
+        """
         lines: list[str] = [f"Total changes: {len(changes)}", ""]
         for c in changes:
             lines.append(f"[{c.change_type.name}] {c.node.node_type} {c.node.name}")
@@ -27,6 +38,11 @@ class ReportFormatter:
 
     @staticmethod
     def format_risk(report: RiskReport) -> str:
+        """Render a `RiskReport` as a multi-line text report.
+
+        Includes total risk, per-factor breakdown, contributing factors
+        (with reasons), and the list of hot files.
+        """
         lines: list[str] = [f"Total Risk: {report.total_risk}", ""]
         lines.append("Breakdown:")
         for factor, score in report.breakdown.items():
@@ -41,4 +57,5 @@ class ReportFormatter:
 
     @staticmethod
     def to_json(data: Any) -> str:
+        """Serialize `data` to pretty JSON. Falls back to `str(o)` for unknown types."""
         return json.dumps(data, default=lambda o: o.__dict__ if hasattr(o, "__dict__") else str(o), indent=2)

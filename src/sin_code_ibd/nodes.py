@@ -1,16 +1,27 @@
 """Core node types and enums for semantic diffing.
 
-Docs: src/sin_code_ibd/nodes.doc.md
-"""
+Three data classes: `ChangeType` (enum), `DiffNode` (an AST node from
+one side of a diff), and `Change` (a delta between two nodes or an
+add/remove).
 
+Docs: nodes.doc.md
+"""
 from __future__ import annotations
 import dataclasses
 from enum import Enum, auto
 from typing import Any
 
 
+# ── ChangeType enum ───────────────────────────────────────────────────
 class ChangeType(Enum):
-    """Semantic change categories (not text-level)."""
+    """Semantic change categories (not text-level).
+
+    - `ADDED`: node exists only in the "after" side
+    - `REMOVED`: node exists only in the "before" side
+    - `MODIFIED`: same node, signature or body changed
+    - `RENAMED`: same body, parent changed
+    - `REFACTORED`: same signature, body substantially rewritten
+    """
     ADDED = auto()
     REMOVED = auto()
     MODIFIED = auto()
@@ -18,11 +29,24 @@ class ChangeType(Enum):
     REFACTORED = auto()
 
 
+# ── DiffNode ──────────────────────────────────────────────────────────
 @dataclasses.dataclass(frozen=True, slots=True)
 class DiffNode:
-    """A node in the AST that changed."""
-    node_type: str          # e.g. 'FunctionDef', 'ClassDef', 'Import'
-    name: str               # Identifier (function name, class name, etc.)
+    """A node in the AST that changed.
+
+    `frozen=True` + `slots=True` = immutable + memory-efficient.
+
+    Fields:
+      - `node_type`: AST class name (`FunctionDef`, `ClassDef`, `Import`, …)
+      - `name`: identifier (function/class/import name)
+      - `file_path`: absolute or relative path
+      - `start_line` / `end_line`: 1-based, inclusive
+      - `body`: source text (None for imports and for regex-parsed JS/TS)
+      - `signature`: rendered `def f(x, y)` / `class C(Base)` form
+      - `parent`: parent symbol name (for nested functions/classes)
+    """
+    node_type: str
+    name: str
     file_path: str
     start_line: int
     end_line: int
@@ -31,6 +55,7 @@ class DiffNode:
     parent: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable view (all fields, no transformation)."""
         return {
             "node_type": self.node_type,
             "name": self.name,
@@ -43,25 +68,36 @@ class DiffNode:
         }
 
 
+# ── Change ────────────────────────────────────────────────────────────
 @dataclasses.dataclass(frozen=False, slots=True)
 class Change:
-    """A single semantic change between two versions."""
+    """A single semantic change between two versions.
+
+    Mutable (frozen=False) so callers can post-process if needed.
+    `before` and `after` are populated only for MODIFIED / RENAMED /
+    REFACTORED; ADDED has only `after`; REMOVED has only `before`.
+    """
     change_type: ChangeType
     node: DiffNode
-    before: DiffNode | None = None   # populated for MODIFIED/RENAMED/REFACTORED
-    after: DiffNode | None = None    # populated for MODIFIED/RENAMED/REFACTORED
-    details: str = ""                # human-readable summary
+    before: DiffNode | None = None
+    after: DiffNode | None = None
+    details: str = ""
 
     def is_public(self) -> bool:
-        """True if the changed node is part of the public API."""
+        """True if the changed node is part of the public API (no leading underscore)."""
         name = self.node.name
         if not name:
             return False
-        # underscore prefix = private
+        # Underscore prefix = private (Python convention).
         return not name.startswith("_")
 
     def loc_delta(self) -> int:
-        """Approximate lines of code changed."""
+        """Approximate lines of code changed.
+
+        Returns 0 when no before/after is set. Otherwise returns the
+        size of the node (or the absolute delta between sides for
+        MODIFIED).
+        """
         if self.after and self.before:
             return abs(self.after.end_line - self.after.start_line -
                        (self.before.end_line - self.before.start_line))
